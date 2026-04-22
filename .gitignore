@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Node.js / Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+.env
+.env.*
+
+# Tauri / Rust
+frontend/src-tauri/target/
+
+# C++ build artifacts
+code/*.o
+code/optimal_sample
+code/optimal_sample_ilp
+
+# Screenshots / temp files
+截屏*.png
+
+# Obsidian
+.obsidian/workspace.json
+.obsidian/cache
+
+# PDF (可选：如需保留请删除此行)
+# *.pdf

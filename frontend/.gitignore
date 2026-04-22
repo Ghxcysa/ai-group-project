@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.DS_Store
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/
+
+# 运行时生成的 db 文件（可选择保留）
+# db/
