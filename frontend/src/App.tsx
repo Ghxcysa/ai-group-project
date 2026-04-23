@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Database, Layers, Settings2 } from "lucide-react";
 import ArrowRightIcon from "@/assets/icons/line-md--arrow-right-square.svg?react";
 import { cn } from "@/lib/utils";
@@ -7,10 +7,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import Generate from "@/pages/Generate";
 import DBBrowser from "@/pages/DBBrowser";
 import PoolManager from "@/pages/PoolManager";
+import { appDataDir, join } from "@tauri-apps/api/path";
 
 type Page = "generate" | "db" | "pool";
-
-const DB_DIR = "./db";
 
 interface NavItem {
   id: Page;
@@ -42,6 +41,14 @@ const navItems: NavItem[] = [
 
 export default function App() {
   const [page, setPage] = useState<Page>("generate");
+  const [dbDir, setDbDir] = useState<string>("");
+
+  useEffect(() => {
+    appDataDir()
+      .then((dir) => join(dir, "db"))
+      .then(setDbDir)
+      .catch(() => setDbDir("./db"));
+  }, []);
 
   return (
     <div className="flex h-screen bg-background text-foreground">
@@ -98,9 +105,9 @@ export default function App() {
 
       {/* ── Right Content Area ── */}
       <main className="flex flex-1 flex-col overflow-hidden">
-        {page === "generate" && <Generate dbDir={DB_DIR} />}
-        {page === "db" && <DBBrowser dbDir={DB_DIR} />}
-        {page === "pool" && <PoolManager dbDir={DB_DIR} />}
+        {page === "generate" && <Generate dbDir={dbDir} />}
+        {page === "db" && <DBBrowser dbDir={dbDir} />}
+        {page === "pool" && <PoolManager dbDir={dbDir} />}
       </main>
     </div>
   );
