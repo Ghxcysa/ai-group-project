@@ -70,6 +70,15 @@ bool ILPSolver::exportLP(const std::string& filePath, const Problem& prob)
         }
         ofs << " >= " << prob.minCover << "\n";
     }
+
+    if (prob.greedyUpperBound > 0) {
+        ofs << " ub:";
+        for (int c = 0; c < prob.numK; ++c) {
+            if (c > 0) ofs << " +";
+            ofs << " x" << c;
+        }
+        ofs << " <= " << prob.greedyUpperBound << "\n";
+    }
     ofs << "\n";
 
     // ── Variable bounds ────────────────────────────────────────────────────────
@@ -80,18 +89,21 @@ bool ILPSolver::exportLP(const std::string& filePath, const Problem& prob)
         ofs << " 0 <= z" << si << " <= 1\n";
     ofs << "\n";
 
-    // ── Declare all variables as binary ───────────────────────────────────────
-    ofs << "Binary\n";
-    for (int c = 0; c < prob.numK; ++c) {
-        if (c > 0 && c % 10 == 0) ofs << "\n";
-        ofs << " x" << c;
+    // ── Declare integer variables (omit for LP relaxation mode) ──────────────
+    if (!prob.lpRelaxOnly) {
+        ofs << "Binary\n";
+        for (int c = 0; c < prob.numK; ++c) {
+            if (c > 0 && c % 10 == 0) ofs << "\n";
+            ofs << " x" << c;
+        }
+        ofs << "\n";
+        for (int si = 0; si < prob.numSubs; ++si) {
+            if (si > 0 && si % 10 == 0) ofs << "\n";
+            ofs << " z" << si;
+        }
+        ofs << "\n";
     }
-    ofs << "\n";
-    for (int si = 0; si < prob.numSubs; ++si) {
-        if (si > 0 && si % 10 == 0) ofs << "\n";
-        ofs << " z" << si;
-    }
-    ofs << "\n\nEnd\n";
+    ofs << "\nEnd\n";
 
     ofs.close();
     return true;
@@ -128,11 +140,26 @@ ILPSolver::Solution ILPSolver::parseSolutionFile(const std::string& solPath,
                 foundFeasible = true;
             }
         }
+        if (line == "Optimal") {
+            foundOptimal = true;
+            foundFeasible = true;
+        } else if (line == "Feasible") {
+            foundFeasible = true;
+        }
 
         // Enter/exit the Columns section
-        if (line == "Columns") { inColumns = true; continue; }
-        if (inColumns && !line.empty() && line[0] != ' ' && line[0] != '\t') {
+        if (line == "Columns" || line.rfind("# Columns", 0) == 0) {
+            inColumns = true;
+            continue;
+        }
+        if (line.rfind("# Rows", 0) == 0 ||
+            line.rfind("# Dual", 0) == 0 ||
+            line.rfind("# Basis", 0) == 0) {
             inColumns = false;
+        }
+        if (inColumns && !line.empty() && line[0] != ' ' && line[0] != '\t') {
+            // New HiGHS versions write column values without indentation.
+            if (line[0] != 'x') inColumns = false;
         }
 
         if (!inColumns) continue;

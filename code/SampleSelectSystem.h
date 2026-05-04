@@ -38,6 +38,28 @@ enum class CoverMode {
     PARTIAL   // j > s: at least minCover s-subsets of each j-subset are covered (partial coverage)
 };
 
+// ── Solver report ─────────────────────────────────────────────────────────────
+struct SolveReport {
+    std::vector<std::vector<int>> groups;
+    std::string algorithm;
+    bool optimal = false;
+    bool feasible = false;
+    bool warmStarted = false;
+    bool improvedIncumbent = false;
+    int lowerBound = 0;
+    int upperBound = 0;
+    int incumbentCount = 0;
+    int threads = 1;
+    unsigned long long nodes = 0;
+    unsigned long long ttHits = 0;
+    double gap = 0.0;
+    double nodesPerSec = 0.0;
+    double reductionRatio = 0.0;
+    double proofTimeSec = 0.0;
+    int timeLimitSec = 0;
+    std::string cacheType = "none";
+};
+
 // ════════════════════════════════════════════════════════════════════════════════
 //  SampleSelectSystem — core class for optimal sample selection
 // ════════════════════════════════════════════════════════════════════════════════
@@ -89,7 +111,7 @@ public:
      * @brief Randomly select n distinct samples from the pool (or 1~m if no pool loaded);
      *        stores result in samples_
      */
-    void randomSamples();
+    void randomSamples(unsigned seed = 0); ///< seed=0 → random each run; nonzero → deterministic
 
     /**
      * @brief Accept n manually provided samples, validating range and uniqueness
@@ -127,6 +149,62 @@ public:
         const std::string& solverBin    = "highs",
         const std::string& workDir      = "./ilp_tmp",
         int                timeLimitSec = 60);
+
+    /**
+     * @brief GRASP (Greedy Randomized Adaptive Search Procedure) solver for large-scale
+     *        instances where C(n,k) > 10000. Repeatedly constructs solutions via
+     *        randomized greedy (RCL-based) and refines them with local search.
+     * @param timeLimitSec  Wall-clock time budget in seconds (default 120)
+     * @param alpha         RCL greediness parameter in [0,1]: 0=pure greedy, 1=random (default 0.3)
+     * @return Best k-group list found within the time limit
+     */
+    std::vector<std::vector<int>> generateGRASP(
+        int    timeLimitSec = 120,
+        double alpha        = 0.3);
+
+    /**
+     * @brief Embedded Python CP-SAT exact solver for small/medium instances (C(n,k) ≤ 8008).
+     *        Uses OR-Tools CP-SAT via the Python C API embedded in-process — no subprocess.
+     *        Falls back to generateOptimalGroups() if OR-Tools is unavailable or times out.
+     * @param timeLimitSec  CP-SAT solver time limit in seconds (default 60)
+     * @return Optimal (or best feasible) k-group list
+     */
+    std::vector<std::vector<int>> generateCPSAT(int timeLimitSec = 60);
+
+    /**
+     * @brief Portfolio solver inspired by setcoveringsolver:
+     *        certified cache + project-specific exact solver + heuristic portfolio.
+     * @param timeLimitSec Overall heuristic/exact time budget hint
+     * @param solverBin    HiGHS executable used for exact small/medium solves
+     * @param forceExact   Skip certified cache and force the internal exact solver
+     * @param cacheOnly    Only use certified cache; return infeasible if missing
+     * @param cacheDir     Directory used for certified/incumbent solution caches
+     * @param useIncumbentCache Load and update best-feasible warm-start cache
+     * @param incumbentOnly Return the historical best feasible solution only
+     * @param threads      Worker thread hint for exact search
+     * @return Full solver report including feasibility and optimality metadata
+     */
+    SolveReport solvePortfolio(
+        int timeLimitSec = 120,
+        const std::string& solverBin = "highs",
+        bool forceExact = false,
+        bool cacheOnly = false,
+        const std::string& cacheDir = "./certified_cache",
+        bool useIncumbentCache = true,
+        bool incumbentOnly = false,
+        int threads = 1);
+
+    /**
+     * @brief Convenience wrapper returning only groups from solvePortfolio().
+     */
+    std::vector<std::vector<int>> generatePortfolio(
+        int timeLimitSec = 120,
+        const std::string& solverBin = "highs");
+
+    /**
+     * @brief Verify whether a generated group list satisfies the j/s/minCover constraints.
+     */
+    bool verifyGroups(const std::vector<std::vector<int>>& groups) const;
 
     // ── Result operations ──────────────────────────────────────────────────────
     /** Print k-group list to the console */

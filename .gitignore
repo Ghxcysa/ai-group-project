@@ -19,6 +19,19 @@ frontend/src-tauri/target/
 code/*.o
 code/optimal_sample
 code/optimal_sample_ilp
+code/SampleSelectSystem
+code/optimal_sample_test
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+
+# Solver/runtime artifacts
+*.log
+code/ilp_tmp/
+ilp_tmp/
+code/certified_cache/
+code/*.csv
 
 # Screenshots / temp files
 截屏*.png

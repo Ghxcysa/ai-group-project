@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{self, BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
@@ -23,15 +23,74 @@ pub struct GenerateParams {
     pub dbdir: String,
     #[serde(rename = "poolFile")]
     pub pool_file: Option<String>,
+    /// Solver time limit in seconds (None → 120s default)
+    #[serde(rename = "timeLimit")]
+    pub time_limit: Option<i32>,
+    /// Worker thread count (None or 0 → auto-detect)
+    pub threads: Option<i32>,
+    /// Disable incumbent cache warm-start
+    #[serde(rename = "noIncumbentCache")]
+    pub no_incumbent_cache: Option<bool>,
+    /// Deterministic random seed for sample selection (None or 0 → random)
+    pub seed: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateResult {
     pub success: bool,
+    #[serde(default)]
     pub count: usize,
     #[serde(rename = "dbFile")]
+    #[serde(default)]
     pub db_file: String,
+    #[serde(default)]
+    pub algorithm: String,
+    #[serde(default)]
+    pub optimal: bool,
+    #[serde(default)]
+    pub feasible: bool,
+    #[serde(rename = "warmStarted")]
+    #[serde(default)]
+    pub warm_started: bool,
+    #[serde(rename = "improvedIncumbent")]
+    #[serde(default)]
+    pub improved_incumbent: bool,
+    #[serde(rename = "lowerBound")]
+    #[serde(default)]
+    pub lower_bound: i32,
+    #[serde(rename = "upperBound")]
+    #[serde(default)]
+    pub upper_bound: i32,
+    #[serde(rename = "incumbentCount")]
+    #[serde(default)]
+    pub incumbent_count: i32,
+    #[serde(rename = "cacheType")]
+    #[serde(default)]
+    pub cache_type: String,
+    #[serde(default)]
+    pub threads: i32,
+    #[serde(default)]
+    pub nodes: u64,
+    #[serde(rename = "nodesPerSec")]
+    #[serde(default)]
+    pub nodes_per_sec: f64,
+    #[serde(rename = "reductionRatio")]
+    #[serde(default)]
+    pub reduction_ratio: f64,
+    #[serde(rename = "ttHits")]
+    #[serde(default)]
+    pub tt_hits: u64,
+    #[serde(rename = "proofTimeSec")]
+    #[serde(default)]
+    pub proof_time_sec: f64,
+    #[serde(default)]
+    pub gap: f64,
+    #[serde(rename = "timeLimitSec")]
+    #[serde(default)]
+    pub time_limit_sec: i32,
+    #[serde(default)]
     pub samples: Vec<i32>,
+    #[serde(default)]
     pub groups: Vec<Vec<i32>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -119,6 +178,21 @@ pub async fn run_generate(
 ) -> Result<GenerateResult, String> {
     // 确保 dbdir 存在
     fs::create_dir_all(&params.dbdir).map_err(|e| e.to_string())?;
+    let cache_dir = Path::new(&params.dbdir)
+        .join("certified_cache")
+        .to_string_lossy()
+        .to_string();
+
+    // Thread count: use user-supplied value (>0), else auto-detect
+    let thread_count = match params.threads {
+        Some(t) if t > 0 => t as usize,
+        _ => std::thread::available_parallelism()
+            .map(|n| n.get().max(4))
+            .unwrap_or(4),
+    };
+
+    // Time limit: use user-supplied value (>0), else default 120s
+    let time_limit_sec = params.time_limit.unwrap_or(120).max(1);
 
     // 构建参数列表
     let mut args = vec![
@@ -131,6 +205,9 @@ pub async fn run_generate(
         format!("--minCover={}", params.min_cover),
         format!("--run={}", params.run),
         format!("--dbdir={}", params.dbdir),
+        format!("--cacheDir={}", cache_dir),
+        format!("--threads={}", thread_count),
+        format!("--timeLimit={}", time_limit_sec),
     ];
 
     if let Some(samples) = &params.samples {
@@ -152,7 +229,17 @@ pub async fn run_generate(
         }
     }
 
-    // 调用 sidecar（名称与 tauri.conf.json 中的 externalBin 对应）
+    if params.no_incumbent_cache.unwrap_or(false) {
+        args.push("--noIncumbentCache".to_string());
+    }
+
+    if let Some(seed) = params.seed {
+        if seed > 0 {
+            args.push(format!("--seed={}", seed));
+        }
+    }
+
+    // 调用统一的 C++ sidecar（内部已根据 C(n,k) 自动路由到 CP-SAT / GRASP / greedy）
     let output = app
         .shell()
         .sidecar("optimal_sample")
@@ -324,4 +411,3 @@ pub async fn import_pool(
         numbers,
     }))
 }
-

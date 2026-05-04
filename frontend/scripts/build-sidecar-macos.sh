@@ -21,6 +21,7 @@ echo "    架构: $ARCH → triple: $TRIPLE"
 echo "==> 编译 C++ optimal_sample..."
 cd "$CPP_DIR"
 g++ -std=c++17 -O2 -o optimal_sample SampleSelectSystem.cpp ILPSolver.cpp main.cpp
+echo "    n=11..16 优先使用 certified cache / 内置 exact；HiGHS 仅作为其它小规模参考路径"
 
 echo "==> 复制到 binaries 目录..."
 mkdir -p "$BINARIES_DIR"

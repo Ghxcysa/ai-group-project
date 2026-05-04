@@ -32,6 +32,7 @@
 #include <numeric>      // std::iota
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 // ── Helper: clear cin error state and discard remaining input on the line ─────
@@ -88,7 +89,14 @@ static void runExample(int m, int n, int k, int j, int s, int minCover,
         }
 
         // Generate optimal k-groups
-        auto groups = sys.generateOptimalGroups();
+        auto report = sys.solvePortfolio(120);
+        auto groups = report.groups;
+        std::cout << ">> Solver: " << report.algorithm
+                  << ", feasible=" << (report.feasible ? "true" : "false")
+                  << ", optimal=" << (report.optimal ? "true" : "false")
+                  << ", lb=" << report.lowerBound
+                  << ", ub=" << report.upperBound
+                  << ", gap=" << report.gap << "\n";
 
         // Print results
         sys.printGroups(groups);
@@ -191,7 +199,14 @@ static void menuGenerate(const std::string& outputDir,
         }
 
         // Generate
-        auto groups = sys.generateOptimalGroups();
+        auto report = sys.solvePortfolio(120);
+        auto groups = report.groups;
+        std::cout << ">> Solver: " << report.algorithm
+                  << ", feasible=" << (report.feasible ? "true" : "false")
+                  << ", optimal=" << (report.optimal ? "true" : "false")
+                  << ", lb=" << report.lowerBound
+                  << ", ub=" << report.upperBound
+                  << ", gap=" << report.gap << "\n";
         sys.printGroups(groups);
 
         // Ask whether to save
@@ -526,6 +541,14 @@ static bool hasFlag(int argc, char* argv[], const std::string& flag)
     return false;
 }
 
+static int defaultThreadCount()
+{
+    unsigned hc = std::thread::hardware_concurrency();
+    if (hc <= 1) return 1;
+    if (hc <= 4) return (int)hc;
+    return (int)hc - 1;
+}
+
 /** Parse a comma-separated string into vector<int> */
 static std::vector<int> parseCSV(const std::string& s)
 {
@@ -542,6 +565,101 @@ static std::vector<int> parseCSV(const std::string& s)
     return result;
 }
 
+static void runBuildCacheMode(int argc, char* argv[], bool buildIncumbents)
+{
+    auto timeStr = getArg(argc, argv, "--timeLimit");
+    auto cacheDir = getArg(argc, argv, "--cacheDir");
+    auto threadsStr = getArg(argc, argv, "--threads");
+    if (cacheDir.empty()) cacheDir = "./certified_cache";
+
+    int timeLimitSec = 120;
+    if (!timeStr.empty()) {
+        try { timeLimitSec = std::stoi(timeStr); } catch (...) {}
+    }
+    if (timeLimitSec <= 0) timeLimitSec = 120;
+    int threads = defaultThreadCount();
+    if (!threadsStr.empty()) {
+        try { threads = std::max(1, std::stoi(threadsStr)); } catch (...) {}
+    }
+
+    int attempted = 0;
+    int optimal = 0;
+    int feasible = 0;
+    int incumbentWritten = 0;
+    std::vector<std::string> failures;
+
+    for (int n = 11; n <= 16; ++n) {
+        for (int k = K_MIN; k <= K_MAX; ++k) {
+            if (k > n) continue;
+            for (int j = 3; j <= k; ++j) {
+                for (int s = S_MIN; s <= j; ++s) {
+                    long long maxCover = SampleSelectSystem::C(j, s);
+                    for (int minCover = 1; minCover <= maxCover; ++minCover) {
+                        ++attempted;
+                        try {
+                            SampleSelectSystem sys(45, n, k, j, s, minCover);
+                            std::vector<int> samples(n);
+                            std::iota(samples.begin(), samples.end(), 1);
+                            if (!sys.inputSamples(samples)) {
+                                failures.push_back(std::to_string(n) + "-" +
+                                                   std::to_string(k) + "-" +
+                                                   std::to_string(j) + "-" +
+                                                   std::to_string(s) + "-" +
+                                                   std::to_string(minCover) +
+                                                   ": sample setup failed");
+                                continue;
+                            }
+                            auto report = sys.solvePortfolio(
+                                timeLimitSec, "highs", false, false, cacheDir,
+                                true, false, threads);
+                            if (report.feasible) ++feasible;
+                            if (report.improvedIncumbent || report.cacheType == "incumbent") {
+                                ++incumbentWritten;
+                            }
+                            if (report.optimal) {
+                                ++optimal;
+                            } else if (!buildIncumbents) {
+                                failures.push_back(std::to_string(n) + "-" +
+                                                   std::to_string(k) + "-" +
+                                                   std::to_string(j) + "-" +
+                                                   std::to_string(s) + "-" +
+                                                   std::to_string(minCover) +
+                                                   ": " + report.algorithm);
+                            }
+                        } catch (const std::exception& e) {
+                            failures.push_back(std::to_string(n) + "-" +
+                                               std::to_string(k) + "-" +
+                                               std::to_string(j) + "-" +
+                                               std::to_string(s) + "-" +
+                                               std::to_string(minCover) +
+                                               ": " + e.what());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    bool success = buildIncumbents ? (feasible == attempted) : (optimal == attempted);
+    std::cout << "{\"success\":" << (success ? "true" : "false")
+              << ",\"algorithm\":\""
+              << (buildIncumbents ? "Build incumbent cache" : "Build certified cache")
+              << "\""
+              << ",\"cacheDir\":\"" << jsonEscape(cacheDir) << "\""
+              << ",\"attempted\":" << attempted
+              << ",\"optimal\":" << optimal
+              << ",\"feasible\":" << feasible
+              << ",\"incumbentWritten\":" << incumbentWritten
+              << ",\"timeLimitSec\":" << timeLimitSec
+              << ",\"threads\":" << threads
+              << ",\"failures\":[";
+    for (int i = 0; i < (int)failures.size(); ++i) {
+        if (i) std::cout << ",";
+        std::cout << "\"" << jsonEscape(failures[i]) << "\"";
+    }
+    std::cout << "]}" << std::flush;
+}
+
 /**
  * @brief CLI non-interactive mode entry point
  *
@@ -551,7 +669,7 @@ static std::vector<int> parseCSV(const std::string& s)
  *                    [--dbdir=./db] [--poolFile=./db/pool_test_m45.txt]
  *
  * Success output (stdout JSON):
- *   {"success":true,"count":4,"dbFile":"./db/45-8-6-6-5-1-4.txt","groups":[[1,2,3,4,5,6],...]}
+ *   {"success":true,"count":4,"algorithm":"HiGHS ILP exact","optimal":true,...}
  *
  * Failure output:
  *   {"success":false,"error":"<reason>"}
@@ -562,6 +680,15 @@ static void runCliMode(int argc, char* argv[])
         std::cout << "{\"success\":false,\"error\":\""
                   << jsonEscape(msg) << "\"}" << std::flush;
     };
+
+    if (hasFlag(argc, argv, "--buildCache")) {
+        runBuildCacheMode(argc, argv, false);
+        return;
+    }
+    if (hasFlag(argc, argv, "--buildIncumbentCache")) {
+        runBuildCacheMode(argc, argv, true);
+        return;
+    }
 
     // ── Parse arguments ───────────────────────────────────────────────────────
     auto mStr        = getArg(argc, argv, "--m");
@@ -574,7 +701,15 @@ static void runCliMode(int argc, char* argv[])
     auto runStr      = getArg(argc, argv, "--run");
     auto dbdir       = getArg(argc, argv, "--dbdir");
     auto poolFile    = getArg(argc, argv, "--poolFile");
+    auto timeStr      = getArg(argc, argv, "--timeLimit");
+    auto cacheDir     = getArg(argc, argv, "--cacheDir");
+    auto threadsStr   = getArg(argc, argv, "--threads");
+    auto seedStr      = getArg(argc, argv, "--seed");  // optional RNG seed for randomSamples
     bool doSave      = hasFlag(argc, argv, "--save");
+    bool forceExact   = hasFlag(argc, argv, "--exact");
+    bool cacheOnly    = hasFlag(argc, argv, "--cacheOnly");
+    bool noIncumbentCache = hasFlag(argc, argv, "--noIncumbentCache");
+    bool incumbentOnly = hasFlag(argc, argv, "--incumbentOnly");
 
     if (mStr.empty() || nStr.empty() || kStr.empty() ||
         jStr.empty() || sStr.empty()) {
@@ -582,7 +717,8 @@ static void runCliMode(int argc, char* argv[])
         return;
     }
 
-    int m, n, k, j, s, minCover = 1, runCount = 1;
+    int m, n, k, j, s, minCover = 1, runCount = 1, timeLimitSec = 120;
+    int threads = defaultThreadCount();
     try {
         m        = std::stoi(mStr);
         n        = std::stoi(nStr);
@@ -591,12 +727,15 @@ static void runCliMode(int argc, char* argv[])
         s        = std::stoi(sStr);
         if (!minCoverStr.empty()) minCover = std::stoi(minCoverStr);
         if (!runStr.empty())      runCount = std::stoi(runStr);
+        if (!timeStr.empty())     timeLimitSec = std::stoi(timeStr);
+        if (!threadsStr.empty())  threads = std::max(1, std::stoi(threadsStr));
     } catch (...) {
         outputError("Parameter parse error: values must be integers");
         return;
     }
 
     if (dbdir.empty()) dbdir = "./db";
+    if (cacheDir.empty()) cacheDir = "./certified_cache";
 
     // ── Construct system object and run ──────────────────────────────────────
     try {
@@ -623,12 +762,30 @@ static void runCliMode(int argc, char* argv[])
                 outputError("Invalid samples: out of range or duplicates");
                 return;
             }
+        } else if (!seedStr.empty()) {
+            // --seed=N  →  deterministic random sample selection
+            unsigned seed = (unsigned)std::stoul(seedStr);
+            sys.randomSamples(seed);
         } else {
             sys.randomSamples();
         }
 
-        // Generate optimal k-groups
-        auto groups = sys.generateOptimalGroups();
+        // Portfolio routing:
+        //   n=11..16 → certified cache / internal exact branch-and-bound
+        //   other small/medium cases may still use HiGHS as an optional reference
+        if (timeLimitSec <= 0) timeLimitSec = 120;
+        auto report = sys.solvePortfolio(
+            timeLimitSec, "highs", forceExact, cacheOnly, cacheDir,
+            !noIncumbentCache, incumbentOnly, threads);
+        if (cacheOnly && !report.feasible) {
+            outputError("Certified cache missing for requested parameters");
+            return;
+        }
+        if (incumbentOnly && !report.feasible) {
+            outputError("Incumbent cache missing for requested parameters");
+            return;
+        }
+        const auto& groups = report.groups;
 
         // Save (optional)
         std::string savedFile;
@@ -639,6 +796,23 @@ static void runCliMode(int argc, char* argv[])
         // ── Output JSON ───────────────────────────────────────────────────────
         std::cout << "{\"success\":true,\"count\":" << groups.size()
                   << ",\"dbFile\":\"" << jsonEscape(savedFile) << "\""
+                  << ",\"algorithm\":\"" << jsonEscape(report.algorithm) << "\""
+                  << ",\"optimal\":" << (report.optimal ? "true" : "false")
+                  << ",\"feasible\":" << (report.feasible ? "true" : "false")
+                  << ",\"lowerBound\":" << report.lowerBound
+                  << ",\"upperBound\":" << report.upperBound
+                  << ",\"gap\":" << std::fixed << std::setprecision(6) << report.gap
+                  << ",\"timeLimitSec\":" << report.timeLimitSec
+                  << ",\"warmStarted\":" << (report.warmStarted ? "true" : "false")
+                  << ",\"incumbentCount\":" << report.incumbentCount
+                  << ",\"cacheType\":\"" << jsonEscape(report.cacheType) << "\""
+                  << ",\"improvedIncumbent\":" << (report.improvedIncumbent ? "true" : "false")
+                  << ",\"threads\":" << report.threads
+                  << ",\"nodes\":" << report.nodes
+                  << ",\"nodesPerSec\":" << std::fixed << std::setprecision(2) << report.nodesPerSec
+                  << ",\"reductionRatio\":" << std::fixed << std::setprecision(6) << report.reductionRatio
+                  << ",\"ttHits\":" << report.ttHits
+                  << ",\"proofTimeSec\":" << std::fixed << std::setprecision(6) << report.proofTimeSec
                   << ",\"samples\":[";
         const auto& samp = sys.getSamples();
         for (int i = 0; i < (int)samp.size(); ++i) {

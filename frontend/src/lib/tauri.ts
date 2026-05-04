@@ -14,12 +14,37 @@ export interface GenerateParams {
   run: number;
   dbdir: string;
   poolFile?: string;
+  /** Solver time limit in seconds (default 120) */
+  timeLimit?: number;
+  /** Worker thread count (0 = auto-detect) */
+  threads?: number;
+  /** Disable incumbent cache warm-start */
+  noIncumbentCache?: boolean;
+  /** Deterministic random seed for sample selection (0 = random each run) */
+  seed?: number;
 }
 
 export interface GenerateResult {
   success: boolean;
   count: number;
   dbFile: string;
+  algorithm: string;
+  optimal: boolean;
+  feasible: boolean;
+  warmStarted: boolean;
+  improvedIncumbent: boolean;
+  lowerBound: number;
+  upperBound: number;
+  incumbentCount: number;
+  cacheType: string;
+  gap: number;
+  timeLimitSec: number;
+  threads: number;
+  nodes: number;
+  nodesPerSec: number;
+  reductionRatio: number;
+  ttHits: number;
+  proofTimeSec: number;
   samples: number[];
   groups: number[][];
   error?: string;

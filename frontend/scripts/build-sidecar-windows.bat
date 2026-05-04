@@ -17,19 +17,21 @@ REM 优先尝试 MSVC cl.exe
 where cl >nul 2>&1
 if %errorlevel% == 0 (
     echo    使用 MSVC cl.exe
-    cl /std:c++17 /O2 /EHsc SampleSelectSystem.cpp main.cpp /Fe:optimal_sample.exe
+    cl /std:c++17 /O2 /EHsc SampleSelectSystem.cpp ILPSolver.cpp main.cpp /Fe:optimal_sample.exe
 ) else (
     REM 回退到 MinGW g++
     where g++ >nul 2>&1
     if %errorlevel% == 0 (
         echo    使用 MinGW g++
-        g++ -std=c++17 -O2 -o optimal_sample.exe SampleSelectSystem.cpp main.cpp
+        g++ -std=c++17 -O2 -o optimal_sample.exe SampleSelectSystem.cpp ILPSolver.cpp main.cpp
         set TRIPLE=x86_64-pc-windows-gnu
     ) else (
         echo [错误] 未找到 cl.exe 或 g++，请安装 MSVC 或 MinGW
         exit /b 1
     )
 )
+
+echo    n=11..16 优先使用 certified cache / 内置 exact；HiGHS 仅作为其它小规模参考路径
 
 echo =^> 复制到 binaries 目录...
 if not exist "%BINARIES_DIR%" mkdir "%BINARIES_DIR%"

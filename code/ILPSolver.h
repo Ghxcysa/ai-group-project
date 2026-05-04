@@ -27,6 +27,11 @@ public:
 
         /// Greedy upper bound (0 = do not pass an upper-bound constraint)
         int greedyUpperBound = 0;
+
+        /// If true, solve as LP relaxation (continuous variables) instead of ILP.
+        /// LP relaxation solves in polynomial time and gives the tightest possible
+        /// lower bound — much faster than full ILP B&B for large instances.
+        bool lpRelaxOnly = false;
     };
 
     // ── Solution ───────────────────────────────────────────────────────────────

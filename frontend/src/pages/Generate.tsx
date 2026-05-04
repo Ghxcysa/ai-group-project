@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { Info } from "lucide-react";
 import CogIcon from "@/assets/icons/line-md--cog-loop.svg?react";
 import ConfirmIcon from "@/assets/icons/line-md--confirm-circle-twotone.svg?react";
@@ -17,6 +17,40 @@ import { Separator } from "@/components/ui/separator";
 import GroupTable from "@/components/GroupTable";
 import { runGenerate, listPools, type GenerateResult, type PoolFileInfo } from "@/lib/tauri";
 import { useEffect } from "react";
+
+// ── Algorithm info derived from n ────────────────────────────────────────────
+
+function binom(n: number, k: number): number {
+  if (k < 0 || k > n) return 0;
+  k = Math.min(k, n - k);
+  let r = 1;
+  for (let i = 0; i < k; i++) r = (r * (n - i)) / (i + 1);
+  return Math.round(r);
+}
+
+interface AlgoInfo {
+  name: string;
+  label: string;
+  description: string;
+  color: string; // tailwind bg class for the badge
+}
+
+function getAlgoInfo(n: number, k: number, minCover: number): AlgoInfo {
+  if (minCover === 1) {
+    return {
+      name: "Portfolio",
+      label: "Set-cover Portfolio",
+      description: `Greedy variants + row-weighted LNS · C(${n},${k}) = ${binom(n, k)} · certified cache/exact for n=11..16`,
+      color: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300",
+    };
+  }
+  return {
+    name: "Generalized Portfolio",
+    label: "Generalized Portfolio",
+    description: `minCover=${minCover} · generalized coverage · C(${n},${k}) = ${binom(n, k)} · certified cache/exact for n=11..16`,
+    color: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
+  };
+}
 
 interface ParamField {
   key: keyof Params;
@@ -61,9 +95,21 @@ export default function Generate({ dbDir }: Props) {
   const [runCount, setRunCount] = useState(1);
   const [autoSave, setAutoSave] = useState(false);
 
+  // Advanced solver settings
+  const [timeLimit, setTimeLimit] = useState(120);
+  const [threads, setThreads] = useState(0);           // 0 = auto
+  const [noIncumbentCache, setNoIncumbentCache] = useState(false);
+  const [seed, setSeed] = useState(0);                 // 0 = random
+
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<GenerateResult | null>(null);
   const [error, setError] = useState<string>("");
+
+  // Derived: algorithm that will be / was used
+  const algoInfo = useMemo(
+    () => getAlgoInfo(params.n, params.k, params.minCover),
+    [params.n, params.k, params.minCover],
+  );
 
   // Load pool file list
   useEffect(() => {
@@ -114,6 +160,10 @@ export default function Generate({ dbDir }: Props) {
         run: runCount,
         dbdir: dbDir,
         poolFile: sampleMode === "pool" ? selectedPool : undefined,
+        timeLimit: timeLimit > 0 ? timeLimit : 120,
+        threads: threads > 0 ? threads : undefined,
+        noIncumbentCache: noIncumbentCache || undefined,
+        seed: seed > 0 ? seed : undefined,
       });
       setResult(res);
       if (!res.success) setError(res.error || "Generation failed");
@@ -123,7 +173,8 @@ export default function Generate({ dbDir }: Props) {
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params, sampleMode, manualInput, selectedPool, autoSave, runCount, dbDir]);
+  }, [params, sampleMode, manualInput, selectedPool, autoSave, runCount, dbDir,
+      timeLimit, threads, noIncumbentCache, seed]);
 
   const sampleSet = result ? new Set(result.samples) : new Set<number>();
 
@@ -249,13 +300,89 @@ export default function Generate({ dbDir }: Props) {
                 </div>
               )}
             </div>
+
+            <Separator />
+
+            {/* Advanced Solver Settings */}
+            <div className="space-y-3">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Advanced Settings
+              </Label>
+
+              <div className="space-y-1">
+                <Label htmlFor="timeLimit" className="flex items-center gap-1 text-sm">
+                  Time limit
+                  <span className="text-xs text-muted-foreground">(seconds)</span>
+                </Label>
+                <Input
+                  id="timeLimit"
+                  type="number"
+                  min={10}
+                  max={3600}
+                  value={timeLimit}
+                  onChange={(e) => setTimeLimit(parseInt(e.target.value, 10) || 120)}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="threads" className="flex items-center gap-1 text-sm">
+                  Threads
+                  <span className="text-xs text-muted-foreground">(0 = auto)</span>
+                </Label>
+                <Input
+                  id="threads"
+                  type="number"
+                  min={0}
+                  max={64}
+                  value={threads}
+                  onChange={(e) => setThreads(parseInt(e.target.value, 10) || 0)}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="seed" className="flex items-center gap-1 text-sm">
+                  Random seed
+                  <span className="text-xs text-muted-foreground">(0 = random)</span>
+                </Label>
+                <Input
+                  id="seed"
+                  type="number"
+                  min={0}
+                  value={seed}
+                  onChange={(e) => setSeed(parseInt(e.target.value, 10) || 0)}
+                />
+              </div>
+
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={noIncumbentCache}
+                  onChange={(e) => setNoIncumbentCache(e.target.checked)}
+                  className="accent-primary"
+                />
+                Disable incumbent cache
+              </label>
+            </div>
           </div>
         </ScrollArea>
 
-        {/* Generate Button */}
-        <div className="border-t p-4">
+        {/* Algorithm hint + Generate Button */}
+        <div className="border-t p-4 space-y-3">
+          {/* Algorithm indicator */}
+          <div className="rounded-md border px-3 py-2 space-y-1">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">Algorithm:</span>
+              <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${algoInfo.color}`}>
+                {algoInfo.label}
+              </span>
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              {algoInfo.description}
+            </p>
+          </div>
+
           {error && (
-            <p className="mb-2 flex items-center gap-1.5 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <p className="flex items-center gap-1.5 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
               <CloseCircleIcon className="h-4 w-4 shrink-0" />
               {error}
             </p>
@@ -282,6 +409,12 @@ export default function Generate({ dbDir }: Props) {
             <div className="flex items-center gap-3">
               <Badge variant="secondary">
                 {result.count} k-groups
+              </Badge>
+              <Badge
+                variant={result.optimal ? "default" : "outline"}
+                className="text-xs"
+              >
+                {result.optimal ? "Optimal" : result.feasible ? "Best feasible" : "Not verified"}
               </Badge>
               {result.dbFile && (
                 <Badge variant="outline" className="gap-1 text-xs">
@@ -315,7 +448,9 @@ export default function Generate({ dbDir }: Props) {
           {loading && (
             <div className="flex h-full flex-col items-center justify-center gap-3 py-20">
               <CogIcon className="h-10 w-10 text-primary" />
-              <p className="text-sm text-muted-foreground">Running greedy algorithm...</p>
+              <p className="text-sm text-muted-foreground">
+                Running {algoInfo.name}...
+              </p>
             </div>
           )}
 
@@ -341,11 +476,80 @@ export default function Generate({ dbDir }: Props) {
                 </CardContent>
               </Card>
 
+              {/* Solver Report */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">
+                    Solver Report
+                  </CardTitle>
+                  <CardDescription>
+                    {result.algorithm || "Portfolio"} · {result.feasible ? "coverage verified" : "coverage not verified"}
+                    {result.warmStarted ? " · warm-started from previous best" : ""}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4 xl:grid-cols-8">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Status</p>
+                      <p className="font-medium">{result.optimal ? "Optimal" : "Best feasible"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Lower bound</p>
+                      <p className="font-mono">{result.lowerBound}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Upper bound</p>
+                      <p className="font-mono">{result.upperBound || result.count}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Cache</p>
+                      <p className="font-mono">{result.cacheType || "none"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Incumbent</p>
+                      <p className="font-mono">{result.incumbentCount || "-"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Gap</p>
+                      <p className="font-mono">{((result.gap || 0) * 100).toFixed(1)}%</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Time limit</p>
+                      <p className="font-mono">{result.timeLimitSec || 120}s</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Threads</p>
+                      <p className="font-mono">{result.threads || "-"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Nodes</p>
+                      <p className="font-mono">{result.nodes ? result.nodes.toLocaleString() : "-"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Nodes/s</p>
+                      <p className="font-mono">{result.nodesPerSec ? Math.round(result.nodesPerSec).toLocaleString() : "-"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Reduction</p>
+                      <p className="font-mono">{result.reductionRatio ? `${(result.reductionRatio * 100).toFixed(1)}%` : "-"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">TT hits</p>
+                      <p className="font-mono">{result.ttHits ? result.ttHits.toLocaleString() : "-"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Proof time</p>
+                      <p className="font-mono">{result.proofTimeSec ? `${result.proofTimeSec.toFixed(2)}s` : "-"}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
               {/* k-Group Results */}
               <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium">
-                    Optimal k-Groups ({result.count} groups)
+                    {result.optimal ? "Optimal" : "Best"} k-Groups ({result.count} groups)
                   </CardTitle>
                   <CardDescription>
                     Highlighted badges belong to the selected sample set
